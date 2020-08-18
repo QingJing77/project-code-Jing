@@ -1,0 +1,295 @@
+---
+title: "4-block graph"
+output: html_document
+---
+
+Block graph : generate a random positive definite correlation matrix based on the graphical structure.
+```{r}
+set.seed(2020)
+# Generate a random correlation matrix based on random partial correlations
+Sigma <- rcorrmatrix(5)
+# Specify the graphical structure
+for (j in c(4:5) ){
+  Sigma[1,j] <- 0
+}
+for (i in c(4:5) ){
+  Sigma[2,i] <- 0
+}
+# Force the matrix to be symmetric
+Sigma[lower.tri(Sigma)] <- t(Sigma)[lower.tri(Sigma)]
+# check whether the the matrix is positive definite
+is.positive.definite(Sigma)
+```
+
+Apply Monte Carlo method and create lists to store the generated data.
+```{r}
+# Monte carlo iteration: M=500
+M <- 500
+N <- 1000
+d <- 5
+X_G <- vector('list', M)
+X_PIT <- vector('list', M)
+U <- vector('list', M)
+
+for(I in 1:M){
+  X_G[[I]] <- data(N, d)
+  X_PIT[[I]] <- datapit(X_G[[I]])
+  U[[I]] <- quantile(X_PIT[[I]], 0.85)  
+}
+```
+
+Create lists to store the model outputs.
+```{r}
+# for initial clique
+IC <- vector('list', M)
+IC_fit <- vector('list', M)
+A_IC <- vector('list', M)
+B_IC <- vector('list', M)
+Z_IC <- vector('list', M)
+
+# for the second clique
+SC <- vector('list', M)
+SC_fit <- vector('list', M)
+A_SC <- vector('list', M)
+B_SC <- vector('list', M)
+Z_SC <- vector('list', M)
+```
+
+Fit the initial clique: X12 | X3
+```{r}
+for(I in 1:M){
+  IC[[I]] <- X_PIT[[I]][,c(1:3)]
+  IC_fit[[I]] <- HTfit.model.output.dev(IC[[I]], U[[I]], init=rep(c(0.5,0.1),3))
+  A_IC[[I]] <- IC_fit[[I]]$A
+  B_IC[[I]] <- IC_fit[[I]]$B
+  Z_IC[[I]] <- IC_fit[[I]]$Z
+}
+# obtain Monte Carlo estimators
+MA_IC <- Reduce("+", A_IC) / length(A_IC)
+MA_IC <- as.matrix(MA_IC)
+MB_IC <- Reduce("+", B_IC) / length(B_IC)
+MB_IC <- as.matrix(MB_IC)
+```
+
+```{r}
+# obtain Monte Carlo estimators for Z
+z1_list <- NULL
+z2_list <- NULL
+z3_list <- NULL
+
+i <- 1
+for (I in 1:M) {
+    z1_list[[i]] <- as.matrix(Z_IC[[I]][[1]])
+    z2_list[[i]] <- as.matrix(Z_IC[[I]][[2]])
+    z3_list[[i]] <- as.matrix(Z_IC[[I]][[3]])
+    i <- i + 1
+}
+
+Z_list <- c(list(z1_list),list(z2_list), list(z3_list))
+# Monto Carlo estimators of Z
+MZ123 <- NULL
+for (l in 1:3) {
+  MZ123[[l]] <- Reduce("+", Z_list[[l]]) / length(Z_list[[l]])
+  MZ123[[l]] <- as.matrix(MZ123[[l]])
+}
+```
+
+Fit the second clique: X45 | X3
+```{r}
+for(I in 1:M){
+  SC[[I]] <- X_PIT[[I]][,c(3:5)]
+  SC_fit[[I]] <- HTfit.model.output.dev(SC[[I]], U[[I]], init=rep(c(0.5,0.1),3))
+  A_SC[[I]] <- SC_fit[[I]]$A
+  B_SC[[I]] <- SC_fit[[I]]$B
+  Z_SC[[I]] <- SC_fit[[I]]$Z
+}
+
+# obtain Monte Carlo estimators
+MA_SC <- Reduce("+", A_SC) / length(A_SC)
+MA_SC <- as.matrix(MA_SC)
+MB_SC <- Reduce("+", B_SC) / length(B_SC)
+MB_SC <- as.matrix(MB_SC)
+```
+
+```{r}
+# obtain Monte Carlo estimators for Z
+z33_list <- NULL
+z4_list <- NULL
+z5_list <- NULL
+i <- 1
+for (I in 1:M) {
+    z33_list[[i]] <- as.matrix(Z_SC[[I]][[1]])
+    z4_list[[i]] <- as.matrix(Z_SC[[I]][[2]])
+    z5_list[[i]] <- as.matrix(Z_SC[[I]][[3]])
+    i <- i + 1
+}
+Z2_list <- c(list(z33_list),list(z4_list),list(z5_list))
+MZ345 <- NULL
+for (l in 1:3) {
+  MZ345[[l]] <- Reduce("+", Z2_list[[l]]) / length(Z2_list[[l]])
+  MZ345[[l]] <- as.matrix(MZ345[[l]])
+}
+```
+
+Construct the full beta matrix:
+```{r}
+B <- matrix(0, 5, 5)
+B[1:3,1:3] <- MB_IC
+B[3:5,3:5] <- MB_SC
+
+B[4,1] <- B[3,1]
+B[1,4] <- B[1,3]
+B[5,1] <- B[3,1]
+B[1,5] <- B[1,3]
+
+B[4,2] <- B[3,2]
+B[2,4] <- B[2,3]
+B[5,2] <- B[3,2]
+B[2,5] <- B[2,3]
+B
+```
+
+Construct the full alpha matrix:
+```{r}
+A <- matrix(0, 5, 5)
+A[1:3,1:3] <- MA_IC
+A[3:5,3:5] <- MA_SC
+
+A[4,1] <- A[4,3]*A[3,1]
+A[1,4] <- A[1,3]*A[3,4]
+
+A[5,1] <- A[5,3]*A[3,1]
+A[1,5] <- A[1,3]*A[3,5]
+
+A[4,2] <- A[4,3]*A[3,2]
+A[2,4] <- A[2,3]*A[3,4]
+
+A[5,2] <- A[5,3]*A[3,2]
+A[2,5] <- A[2,3]*A[3,5]
+
+A
+```
+
+For the case that simulation starts from C1:
+```{r}
+v <- 2
+rQ1 <- function(N, v, A, B, Z){
+    d <- ncol(A)
+    X     <- matrix(nrow=N, ncol=d)
+    Xstar <- NULL
+    K      <- sample(1:d, size=N, replace=TRUE)
+    Xstar <- lapply(as.list(K), function(k){
+        alphak <- A[k,] 
+        betak  <- B[k,]    
+        Zk     <- Z[[k]]
+        ## 
+        stopifnot(all(Zk[,k]==0))
+        h             <- NULL
+        h             <- rep(0, d)
+        h[-k]         <- apply(as.matrix(Zk[,-k]), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Zk[sample(1:nrow(Zk), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        vplusE        <- v + rexp(1) 
+        Xstar         <- ak(vplusE, alpha=alphak) + bk(vplusE, beta=betak)*Zkstar_kernel
+
+        return(Xstar)
+    })
+    Xstar <- do.call("rbind", Xstar)
+    
+    # check for the simulated data in the separators and include the termination
+    Xstar45 <- lapply(Xstar[,3], function(x) {
+      if(x > v) { 
+        alphak <- MA_IC[3,c(2:3)]
+        betak <- MA_IC[3,c(2:3)]
+        Z45 <- MZ345[[3]][,c(2:3)]
+        h <- apply(Z45,2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf <- Z45[sample(1:nrow(Z45), 1, replace=TRUE),]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        Xstar45 <- ak(x, alpha=alphak) + bk(x, beta=betak)*Zkstar_kernel
+        return(Xstar45)
+      }  else{
+        return(c(0, 0))  
+        }
+      })    
+    Xstar45 <- do.call("rbind", Xstar45)
+    
+    X <- cbind(Xstar, Xstar45)
+
+    out <- list()
+    out$sim <- X
+    out$ex <- K
+    return(out)
+}
+
+SIM11 <- rQ1(10, v=v, A=MA_IC, B=MB_IC, Z=MZ123)
+SIM111 <-as.data.frame(SIM11$sim) 
+SIM11
+```
+
+For the case that simulation starts from C2:
+```{r}
+rQ2 <- function(N, v, A, B, Z){
+    d <- ncol(A)
+    X     <- matrix(nrow=N, ncol=d)
+    Xstar <- NULL
+    K      <- sample(1:d, size=N, replace=TRUE)
+    Xstar <- lapply(as.list(K), function(k){
+        alphak <- A[k,] 
+        betak  <- B[k,]    
+        Zk     <- Z[[k]]
+ 
+        stopifnot(all(Zk[,k]==0))
+        h             <- NULL
+        h             <- rep(0, d)
+        h[-k]         <- apply(as.matrix(Zk[,-k]), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Zk[sample(1:nrow(Zk), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        vplusE        <- v + rexp(1) 
+        Xstar         <- ak(vplusE, alpha=alphak) + bk(vplusE, beta=betak)*Zkstar_kernel
+
+        return(Xstar)
+    })
+    Xstar <- do.call("rbind", Xstar)
+    
+    # check for the simulated data in the separators and include the termination
+    Xstar12 <- lapply(Xstar[,1], function(x) {
+      if(x > v) { 
+        alphak <- MA_SC[3,c(1:2)]
+        betak <- MA_SC[3,c(1:2)]
+        Z12 <- MZ123[[3]][,c(1:2)]
+        h <- apply(Z12,2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf <- Z12[sample(1:nrow(Z12), 1, replace=TRUE),]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        Xstar12 <- ak(x, alpha=alphak) + bk(x, beta=betak)*Zkstar_kernel
+        return(Xstar12)
+      }  else{
+        return(c(0, 0))  
+        }
+      })    
+    Xstar12 <- do.call("rbind", Xstar12)
+    
+    X <- cbind(Xstar12, Xstar)
+
+    out <- list()
+    out$sim <- X
+    out$ex <- K
+    return(out)
+}
+
+SIM2 <- rQ2(10, v=v, A=MA_SC, B=MB_SC, Z=MZ345)
+SIM22 <-as.data.frame(SIM2$sim) 
+SIM2
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

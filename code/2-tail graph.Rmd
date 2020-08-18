@@ -1,0 +1,308 @@
+---
+title: "2-tail graph"
+output: html_document
+---
+
+data: a function to generate samples from Gaussian multivariate distribution
+datapit: a function to perform PIT to transform the data to exp(1) margins
+```{r}
+data <- function(N, d) {
+  mu <- rep(0, d)
+  Sigma <- Sigma
+  X_Gaussian <- mvrnorm(n = N, mu = mu, Sigma = Sigma) 
+  return(X_Gaussian)
+}
+
+datapit <-function(dat) {
+  edf <- apply(dat, 2, function(x) rank(x)/(1+length(x))) 
+  X <- apply(edf, 2, function(x) qexp(x,1)) 
+  return(X)
+}
+```
+
+Tail graph : generate a random positive definite correlation matrix based on the graphical structure.
+```{r}
+set.seed(2020)
+# generate a random positive definite correlation matrix
+Sigma <- rcorrmatrix(6)
+# specify the graphical structure of the tail graph
+for (j in c(3:6) ){
+  Sigma[1,j] <- 0
+}
+for (i in c(1:3) ){
+  Sigma[i,6] <- 0
+}
+# force the matrix to be symmetric
+Sigma[lower.tri(Sigma)] <- t(Sigma)[lower.tri(Sigma)]
+
+# check whether the the matrix is positive definite
+is.positive.definite(Sigma)
+```
+
+Apply Monte Carlo method and create lists to store the generated data.
+```{r}
+# Monte Carlo iteration: M=500
+M <- 500
+# specify the sample size
+N <- 1000
+# specify the dimensions
+d <- 6
+
+# create lists to store the generated data for Monte Carlo iterations
+X_G <- vector('list', M)
+X_PIT <- vector('list', M)
+U <- vector('list', M)
+# call the funtion to perform data generation
+for(I in 1:M){
+  X_G[[I]] <- data(N, d)
+  X_PIT[[I]] <- datapit(X_G[[I]])
+  U[[I]] <- quantile(X_PIT[[I]], 0.85)  
+}
+```
+
+Create lists to store the model outputs.
+```{r}
+# for initial clique
+IC <- vector('list', M)
+IC_fit <- vector('list', M)
+A_IC <- vector('list', M)
+B_IC <- vector('list', M)
+Z_IC <- vector('list', M)
+
+# for the second clique
+SC <- vector('list', M)
+SC_fit <- vector('list', M)
+A_SC <- vector('list', M)
+B_SC <- vector('list', M)
+Z_SC <- vector('list', M)
+
+# for the third clique
+TC <- vector('list', M)
+TC_fit <- vector('list', M)
+TC_OUTPUT <- vector('list', M)
+gamma_TC <- vector('list', M)
+A_TC <- vector('list', M)
+B_TC <- vector('list', M)
+Z_TC <- vector('list', M)
+EXC_TC <- vector('list', M)
+R_TC <- vector('list', M)
+```
+
+Fit the initial clique: X245 | X3
+```{r}
+for(I in 1:M){
+  IC[[I]] <- X_PIT[[I]][,c(2:5)]
+  IC_fit[[I]] <- HTfit.model.output.dev(IC[[I]], U[[I]], init=rep(c(0.5,0.1),4))
+  A_IC[[I]] <- IC_fit[[I]]$A
+  B_IC[[I]] <- IC_fit[[I]]$B
+  Z_IC[[I]] <- IC_fit[[I]]$Z
+}
+# obtain Monte Carlo estimators
+MA_IC <- Reduce("+", A_IC) / length(A_IC)
+MA_IC <- as.matrix(MA_IC)
+MB_IC <- Reduce("+", B_IC) / length(B_IC)
+MB_IC <- as.matrix(MB_IC)
+```
+
+```{r}
+# obtain Monte Carlo estimators for Z
+z2_list <- NULL
+z3_list <- NULL
+z4_list <- NULL
+z5_list <- NULL
+i <- 1
+for (I in 1:M) {
+    z2_list[[i]] <- as.matrix(Z_IC[[I]][[1]])
+    z3_list[[i]] <- as.matrix(Z_IC[[I]][[2]])
+    z4_list[[i]] <- as.matrix(Z_IC[[I]][[3]])
+    z5_list[[i]] <- as.matrix(Z_IC[[I]][[4]])
+    i <- i + 1
+}
+Z_list <- c(list(z2_list),list(z3_list), list(z4_list), list(z5_list))
+MZ2345 <- NULL
+for (l in 1:4) {
+  MZ2345[[l]] <- Reduce("+", Z_list[[l]]) / length(Z_list[[l]])
+  MZ2345[[l]] <- as.matrix(MZ2345[[l]])
+}
+```
+
+Fit the second clique: X1 | X2
+```{r}
+for(I in 1:M){
+  SC[[I]] <- X_PIT[[I]][,c(1:2)]
+  SC_fit[[I]] <- HTfit.model.output.dev(SC[[I]], U[[I]], init=rep(c(0.5,0.1),2))
+  A_SC[[I]] <- SC_fit[[I]]$A
+  B_SC[[I]] <- SC_fit[[I]]$B
+  Z_SC[[I]] <- SC_fit[[I]]$Z
+}
+
+# obtain Monte Carlo estimators
+MA_SC <- Reduce("+", A_SC) / length(A_SC)
+MA_SC <- as.matrix(MA_SC)
+MB_SC <- Reduce("+", B_SC) / length(B_SC)
+MB_SC <- as.matrix(MB_SC)
+```
+
+```{r}
+# obtain Monte Carlo estimators for Z
+z1_list <- NULL
+z22_list <- NULL
+i <- 1
+for (I in 1:M) {
+    z1_list[[i]] <- as.matrix(Z_SC[[I]][[1]])
+    z22_list[[i]] <- as.matrix(Z_SC[[I]][[2]])
+    i <- i + 1
+}
+Z2_list <- c(list(z1_list),list(z22_list))
+MZ12 <- NULL
+for (l in 1:2) {
+  MZ12[[l]] <- Reduce("+", Z2_list[[l]]) / length(Z2_list[[l]])
+  MZ12[[l]] <- as.matrix(MZ12[[l]])
+}
+```
+
+Fit the third clique: X6 | X45
+```{r}
+for(I in 1:M){
+  TC[[I]] <- X_PIT[[I]][,c(4:6)]
+  TC_fit[[I]] <- optim(par=c(0.1, 0.1, 0, 0), fn=pro.lik, dat=TC[[I]], p=3, u=U[[I]], 
+                       method="Nelder-Mead", control=list(fnscale=-1, maxit=5000))
+  TC_OUTPUT[[I]] <- output(theta=TC_fit[[I]]$par, dat=TC[[I]], p=3, u=U[[1]]) 
+  gamma_TC[[I]] <- TC_OUTPUT[[I]]$gamma
+  B_TC[[I]] <- TC_OUTPUT[[I]]$beta
+  A_TC[[I]] <- TC_OUTPUT[[I]]$c
+  Z_TC[[I]] <- TC_OUTPUT[[I]]$resid
+  EXC_TC[[I]] <- TC_OUTPUT[[I]]$f.exc
+  R_TC[[I]] <- TC_OUTPUT[[I]]$resp
+}
+# obtain Monte Carlo estimators
+MA_TC <- Reduce("+", A_TC) / length(A_TC)
+MA_TC <- as.matrix(MA_TC)
+MB_TC <- Reduce("+", B_TC) / length(B_TC)
+MB_TC <- as.matrix(MB_TC)
+Mgamma_TC <- Reduce("+", gamma_TC) / length(gamma_TC)
+Mgamma_TC <- Mgamma_TC
+MZ_TC <- Reduce("+", Z_TC) / length(Z_TC)
+MZ_TC <- as.matrix(MZ_TC)
+```
+
+Fit the third clique to obtain the parameters for X45 | X6:
+```{r}
+C <- vector('list', M)
+C_fit <- vector('list', M)
+A_C <- vector('list', M)
+B_C <- vector('list', M)
+Z_C <- vector('list', M)
+
+for(I in 1:M){
+  C[[I]] <- X_PIT[[I]][,c(4:6)]
+  C_fit[[I]] <- HTfit.model.output.dev(C[[I]], U[[I]], init=rep(c(0.5,0.1),3))
+  A_C[[I]] <- C_fit[[I]]$A
+  B_C[[I]] <- C_fit[[I]]$B
+  Z_C[[I]] <- C_fit[[I]]$Z
+}
+
+# obtain Monte Carlo estimators
+MA_C <- Reduce("+", A_C) / length(A_C)
+MA_C <- as.matrix(MA_C)
+MB_C <- Reduce("+", B_C) / length(B_C)
+MB_C <- as.matrix(MB_C)
+
+z44_list <- NULL
+z55_list <- NULL
+z66_list <- NULL
+i <- 1
+for (I in 1:M) {
+    z44_list[[i]] <- as.matrix(Z_C[[I]][[1]])
+    z55_list[[i]] <- as.matrix(Z_C[[I]][[2]])
+    z66_list[[i]] <- as.matrix(Z_C[[I]][[3]])
+    i <- i + 1
+}
+Z456_list <- c(list(z44_list),list(z55_list), list(z66_list))
+MZ456 <- NULL
+for (l in 1:3) {
+  MZ456[[l]] <- Reduce("+", Z456_list[[l]]) / length(Z456_list[[l]])
+  MZ456[[l]] <- as.matrix(MZ456[[l]])
+}
+```
+
+Construct the full beta matrix:
+```{r}
+B <- matrix(0, 6, 6)
+B[1:nrow(MB_SC), 1:ncol(MB_SC)] <- MB_SC
+B[2:(nrow(MB_IC)+1), 2:(ncol(MB_IC)+1)] <- MB_IC
+B[1,3:6]<- MB_TC
+B[2,6]<- MB_TC
+B[3,1]<- MB_TC
+B[3,6]<- MB_TC
+B[4,1]<- MB_TC
+B[4,6]<- MB_TC
+B[5,1]<- MB_TC
+B[5,6]<- MB_TC
+B[6,1:5]<- MB_TC
+B
+```
+
+Construct the full alpha matrix:
+```{r}
+A <- matrix(0, 6, 6)
+A[1:nrow(MA_SC), 1:ncol(MA_SC)] <- MA_SC
+A[2:(nrow(MA_IC)+1), 2:(ncol(MA_IC)+1)] <- MA_IC
+A[6, 4:6] <- MA_C[3,]
+A[4:6, 6] <- MA_C[,3]
+
+X2 <- NULL
+X24 <-NULL
+X25 <-NULL
+Z24 <- MZ2345[[2]][,3]
+Z25 <- MZ2345[[2]][,4]
+i <- 1
+for (I in 1:M) {
+  X2[[i]] <- IC[[I]][,1][IC[[I]][,1]>U]
+  X24[[i]] <- A[2,4]*X2[[i]]+(X2[[i]]^B[2,4])*Z24
+  X25[[i]] <- A[2,5]*X2[[i]]+(X2[[i]]^B[2,5])*Z25
+  i <- i + 1
+}
+
+X3 <- NULL
+X34 <-NULL
+X35 <-NULL
+Z34 <- MZ2345[[3]][,3]
+Z35 <- MZ2345[[3]][,4]
+i <- 1
+for (I in 1:M) {
+  X3[[i]] <- IC[[I]][,2][IC[[I]][,2]>U]
+  X34[[i]] <- A[3,4]*X3[[i]]+(X3[[i]]^B[3,4])*Z34
+  X35[[i]] <- A[3,5]*X3[[i]]+(X3[[i]]^B[3,5])*Z35
+  i <- i + 1
+}
+
+aplha26 <- NULL
+aplha36 <- NULL
+i <- 1
+for (I in 1:M) {
+  alpha26[[i]] <- mean(apply(cbind(X24[[I]], X25[[I]]), 1, f, gamma=gamma_TC[[I]], delta=2))
+  alpha36[[i]] <- mean(apply(cbind(X34[[I]], X35[[I]]), 1, f, gamma=gamma_TC[[I]], delta=2))
+  i <- i+1
+}
+
+A[2,6] <- MA_TC*(mean(alpha26))
+A[3,6] <- MA_TC*(mean(alpha36))
+A[6,2] <- A[6,4]*A[6,5]*A[4,2]*A[5,2]
+A[6,3] <- A[6,4]*A[6,5]*A[4,3]*A[5,3]
+
+A[3,1] <- A[3,2]*A[2,1]
+A[4,1] <- A[4,2]*A[2,1]
+A[5,1] <- A[5,2]*A[2,1]
+A[6,1] <- A[6,2]*A[2,1]
+
+A[1,3] <- A[1,2]*A[2,3]
+A[1,4] <- A[1,2]*A[2,4]
+A[1,5] <- A[1,2]*A[2,5]
+A[1,6] <- A[1,2]*A[2,6]
+
+A
+```
+
+
+

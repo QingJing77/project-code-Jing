@@ -1,0 +1,200 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+install.packages("clusterGeneration")
+install.packages("mvtnorm")
+install.packages("rmutil")
+# package for checking whether the matrix is positive definite
+install.packages("matrixcalc")
+library(clusterGeneration)
+library(MASS)
+library(mvtnorm)
+library(Matrix)
+library(matrixcalc)
+```
+
+f: a function defined to return the f exceedances.
+```{r}
+# x: a vector containing the extreme variables that are condition on
+# gamma: a vector of parameters attached with the extreme variables(X4 X5) that we condition on
+# delta: control parameter here we will fix to 2
+f <- function(x, gamma, delta) (sum(gamma*((gamma*x)^delta)))^(1/delta)
+```
+
+pro.lik: a function defined to perform profile likelihood estimation given more than one extremes.
+```{r}
+# theta: a vector of parameters of interest including gammas, beta, c
+# dat: a data matrix containing the extremes(X4 X5) and other variable(X6) 
+# p: the column number of extreme
+# thresh: a selected threshold 
+
+pro.lik <- function(theta, dat, p, u){
+  
+  # extract the index of exceedances
+  exc <- apply(dat[,-p], 1, function(x){
+    if(sum(x > u) > 0){
+      return(1)}
+    else{
+      return(0)}
+  })
+  
+  # extract the rows of exceedances
+  dat.exc <- dat[exc == 1,]
+  n <- nrow(dat.exc)
+  # extract the response variable: not the extremeX6
+  resp <- dat.exc[,p]
+  # extract the explanatory variables
+  var <- dat.exc[,-p]
+  d <- ncol(var)
+  
+  # apply additive log-ratio transformation
+  theta[1:d-1] <- log(theta[1:d-1]/theta[d])
+  # add a zero to get a d-dimensional vector
+  theta[1:d] <- append(theta[1:d-1], 0) 
+  # inverse to obtain gammas that sum up to 1
+  gamma <- exp(theta[1:d])/sum(exp(theta[1:d]))
+  
+  # specify the parameter beta and c
+  beta <- exp(theta[d+1])/(1+exp(theta[d+1]))
+  c <- exp(theta[d+2])
+
+  # call the function f to get the values of f.exc
+  f.exc <- apply(var, 1, f, gamma=gamma, delta=2)
+  # derive the expressions of estimated mu and sigma
+  resid <- (resp - c*f.exc)/(f.exc)^beta
+  mu <- mean(resid)
+  sig <- sd(resid)
+  
+  # compute the profile log-likelihood
+  #pl <- -n*log(sig)-beta*sum(log(f.exc))
+  pl <- -(n/2)*log(sig) - sum(log(f.exc))
+  
+  return(pl)
+}
+```
+
+output: a function to obtain the outputs of maximizing pro.lik
+```{r}
+output <- function(theta, dat, p, u){
+  
+  # extract the index of exceedances
+  exc <- apply(dat[,-p], 1, function(x){
+    if(sum(x > u) > 0){
+      return(1)}
+    else{
+      return(0)}
+  })
+  
+  # extract the rows of exceedances
+  dat.exc <- dat[exc == 1,]
+  n <- nrow(dat.exc)
+  # extract the response variable: not the extremeX6
+  resp <- dat.exc[,p]
+  # extract the explanatory variables
+  var <- dat.exc[,-p]
+  d <- ncol(var)
+  
+  theta[1:d-1] <- log(theta[1:d-1]/theta[d])
+  # add a zero to get a d-dimensional vector
+  theta[1:d] <- append(theta[1:d-1], 0) 
+  # plug in the estimated theta to get estimators
+  gamma <- exp(theta[1:d])/sum(exp(theta[1:d]))
+  beta <- exp(theta[d+1])/(1+exp(theta[d+1]))
+  c <- exp(theta[d+2])
+  
+  # call the function f to get the values of f.exc
+  f.exc <- apply(var, 1, f, gamma=gamma, delta=2)
+  # derive the expressions of estimated mu and sigma
+  resid <- (resp - c*f.exc)/(f.exc)^beta
+  mu <- mean(resid)
+  sig <- sd(resid)
+  
+  output <- list()
+  output$gamma <- gamma
+  output$beta <- beta
+  output$c <- c
+  output$resid  <- resid
+  output$f.exc <- f.exc
+  output$resp <- resp
+
+  return(output)
+}
+```
+
+pllik_Lk: a function to perform profile likelihood estimation given only one extreme.
+```{r}
+pllik_Lk <- function (x, dat, which, u) {
+    d <- ncol(dat)
+    n <- nrow(dat[dat[,which]>u,])    
+    
+    alphak            <- (exp(x[seq(1,(d-1),by=1)])/(1+exp(x[seq(1,(d-1),by=1)])))
+    betak             <- exp(x[seq(d,2*(d-1),by=1)])/(1+exp(x[seq(d,2*(d-1),by=1)]))
+    dat_E <- lapply(1:(d-1),
+                    function(J){
+                        K       <- ((1:d)[-which])[J]
+                        Y       <- dat[dat[,which]>u,K]
+                        X       <- dat[dat[,which]>u,which]
+                        Z       <- (Y-alphak[J]*X)/X^(betak[J])
+                        sumX    <- sum(betak[J]*log(X))
+                        sig     <- var(Z)
+                        Zb      <- list()
+                        Zb$Z    <- Z
+                        Zb$sig  <- sig
+                        Zb$sumX <- sumX
+                        return(Zb)
+                     })
+    Z       <- do.call("cbind",lapply(1:(d-1), function(x) dat_E[[x]]$Z))
+    sumX    <- sum(unlist(lapply(1:(d-1), function(x) dat_E[[x]]$sumX)))
+    sumX    <- unlist(lapply(1:(d-1), function(x) dat_E[[x]]$sumX))
+    sig     <- unlist(lapply(1:(d-1), function(x) dat_E[[x]]$sig))
+    muZ     <- colMeans(Z)    
+    Zminmu  <- sweep(Z, 2, muZ, FUN="-")
+    Sigma   <- (t(Zminmu)%*%Zminmu)/n
+    Pl      <- -(n/2)*log(det(Sigma)) - sum(sumX)
+    
+    return(Pl)
+}
+```
+
+HTfit.model.output.dev: a function to obtain the outputs of maximizing pllik_Lk.
+```{r}
+HTfit.model.output.dev <- function(dat, u, init){
+    d   <- ncol(dat)
+    nE  <- unlist(lapply(as.list(1:d), function(x)  sum(dat[,x]>u)))
+    A   <<- Matrix(1, nrow=d, ncol=d)
+    B   <<- Matrix(0, nrow=d, ncol=d)
+    out <- lapply(as.list(1:d), function(k) {
+        X    <- (dat[dat[,k]>u, k])
+        opt  <- optim(par=init, pllik_Lk,
+                      dat=dat,u=u, which=k,
+                      control=list(fnscale=-1,maxit=1e5))
+        alphak   <- (exp(opt$par[1:(d-1)])/(1+exp(opt$par[1:(d-1)])))
+        A[k,-k ] <<- alphak
+        betak    <- exp(opt$par[d:(2*(d-1))])/(1+exp(opt$par[d:(2*(d-1))]))
+        B[k,-k ] <<- betak
+        Z <- Matrix(0, nrow=nE[k], ncol=d)
+        Z[,-k] <- do.call("cbind", lapply(as.list(1:(d-1)), function(y) {
+            Y <- as.matrix((dat[dat[,k]>u, -k]))[,y]
+            resid <- (Y - alphak[y]*X)/X^(betak[y])
+            return (resid)
+        }))
+        output <- list()
+        output$opt    <- opt
+        output$Z      <- Z
+        output$alphak <- alphak
+        output$betak  <- betak
+        return(output)
+    }
+    )
+    model_output <- list()
+    model_output$A <- A
+    model_output$B <- B
+    model_output$Z <- lapply(out, function(x) x$Z)
+    
+    return(model_output)
+}
+```
+

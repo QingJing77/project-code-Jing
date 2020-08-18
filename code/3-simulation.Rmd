@@ -1,0 +1,224 @@
+---
+title: "3-simulation"
+output: html_document
+---
+
+```{r}
+ak <- function(x, alphak) {
+    a <- function(x, alpha) alpha*x
+    as.numeric(unlist(lapply(as.list(alphak), function(y) a(x, alpha=y))))
+}
+
+bk <- function(x, betak){
+    b <- function(x, beta) x^beta
+    as.numeric(unlist(lapply(as.list(betak), function(y) b(x, beta=y))))
+}
+```
+
+For the case that simulation starts from C1:
+```{r}
+rQ1 <- function(N, v, A, B, Z){
+    d <- ncol(A)
+    X     <- matrix(nrow=N, ncol=d)
+    Xstar <- NULL
+    K      <- sample(1:d, size=N, replace=TRUE)
+    Xstar <- lapply(as.list(K), function(k){
+        alphak <- A[k,] 
+        betak  <- B[k,]    
+        Zk     <- Z[[k]]
+
+        stopifnot(all(Zk[,k]==0))
+        h             <- NULL
+        h             <- rep(0, d)
+        h[-k]         <- apply(as.matrix(Zk[,-k]), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Zk[sample(1:nrow(Zk), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        vplusE        <- v + rexp(1) 
+        Xstar         <- ak(vplusE, alpha=alphak) + bk(vplusE, beta=betak)*Zkstar_kernel
+
+        return(Xstar)
+    })
+    Xstar <- do.call("rbind", Xstar)
+    
+    # check for the simulated data in the separators and include the termination
+    X1 <- lapply(Xstar[,1], function(x) {
+      if(x > v) { 
+        Z21 <- MZ12[[2]][,1]
+        h <- density(Z21, kernel="gaussian")$bw
+        Zkstar_edf <- sample(Z21, 1, replace=TRUE)
+        Zkstar_kernel <- rnorm(1, mean=cbind(Zkstar_edf, h)[1], sd=cbind(Zkstar_edf, h)[2])
+        return(A[2,1]*x + x^B[2,1]*Zkstar_kernel)
+      }  else{
+        return(0)  
+        }
+      })    
+    
+    # check for the simulated data in the separators and include the termination
+    X6 <- apply(Xstar[,c(3:4)], 1, function(x) {
+      if(sum(x > v) > 0) { 
+        Z45 <- MZ_TC
+        h <- density(Z45, kernel="gaussian")$bw
+        Zkstar_edf <- sample(Z45, 1, replace=TRUE)
+        Zkstar_kernel <- rnorm(1, mean=cbind(Zkstar_edf, h)[1], sd=cbind(Zkstar_edf, h)[2])
+        return(as.numeric(MA_TC)*f(x=x, gamma = as.numeric(Mgamma_TC), delta = 2) + 
+                 f(x=x, gamma = as.numeric(Mgamma_TC), delta = 2)^as.numeric(MB_TC)*Zkstar_kernel)
+      }  else{
+        return(0)  
+        }
+      })
+    
+    X <- cbind(X1, Xstar, X6)
+
+    out <- list()
+    out$sim <- X
+    out$ex <- K
+    return(out)
+}
+
+SIM11 <- rQ1(8, v=v, A=MA_IC, B=MB_IC, Z=MZ2345)
+SIM111 <-as.data.frame(SIM11$sim) 
+```
+
+For the case that simulation starts from C2:
+```{r}
+rQ2 <- function(N, v, A, B, Z){
+    d <- ncol(A)
+    X     <- matrix(nrow=N, ncol=d)
+    Xstar <- NULL
+    K      <- sample(1:d, size=N, replace=TRUE)
+    Xstar <- lapply(as.list(K), function(k){
+        alphak <- A[k,]
+        betak  <- B[k,]    
+        Zk     <- Z[[k]]
+       
+        stopifnot(all(Zk[,k]==0))
+        h             <- NULL
+        h             <- rep(0, d)
+        h[-k]         <- apply(as.matrix(Zk[,-k]), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Zk[sample(1:nrow(Zk), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        vplusE        <- v + rexp(1) 
+        Xstar         <- ak(vplusE, alpha=alphak) + bk(vplusE, beta=betak)*Zkstar_kernel
+
+        return(Xstar)
+    })
+    Xstar <- do.call("rbind", Xstar)
+    
+    # check for the simulated data in the separators and include the termination
+    X345 <- lapply(Xstar[,2], function(x) {
+      if(x > v) { 
+        alphak <- MA_IC[1,c(2:4)] #行
+        betak  <- MB_IC[1,c(2:4)] 
+        Z345 <- MZ2345[[1]][,-1]
+        #h             <- NULL
+        #h             <- rep(0, 3)
+        h             <- apply(as.matrix(Z345), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Z345[sample(1:nrow(Z345), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        X345          <- ak(x, alpha=alphak) + bk(x, beta=betak)*Zkstar_kernel
+        return(X345)
+      }  else{
+          return(c(0,0,0))}
+
+      })    
+    X345 <- do.call("rbind", X345)
+    
+    # check for the simulated data in the separators and include the termination
+    x6 <- apply(X345[,c(2:3)], 1, function(x) {
+      if(sum(x > v) > 0) { 
+        Z45 <- MZ_TC
+        h <- density(Z45, kernel="gaussian")$bw
+        Zkstar_edf <- sample(Z45, 1, replace=TRUE)
+        Zkstar_kernel <- rnorm(1, mean=cbind(Zkstar_edf, h)[1], sd=cbind(Zkstar_edf, h)[2])
+        x6 <- as.numeric(MA_TC)*f(x=x, gamma = as.numeric(Mgamma_TC), delta = 2) + 
+                 f(x=x, gamma = as.numeric(Mgamma_TC), delta = 2)^as.numeric(MB_TC)*Zkstar_kernel
+        return(x6)
+      }  else{
+        return(0)  
+        }
+      })
+    
+    X <- cbind(Xstar,X345,x6)
+
+    out <- list()
+    out$sim <- X
+    out$ex <- K
+    return(out)
+}
+
+SIM22 <- rQ2(8, v=v, A=MA_SC, B=MB_SC, Z=MZ12)
+SIM222 <-as.data.frame(SIM22$sim) 
+SIM22
+```
+
+For the case that simulation starts from C3:
+```{r}
+rQ3 <- function(N, v, A, B, Z){
+    d <- ncol(A)
+    X     <- matrix(nrow=N, ncol=d)
+    Xstar <- NULL
+    K      <- sample(1:d, size=N, replace=TRUE)
+    Xstar <- lapply(as.list(K), function(k){
+        alphak <- A[k,]
+        betak  <- B[k,]    
+        Zk     <- Z[[k]]
+        
+        stopifnot(all(Zk[,k]==0))
+        h             <- NULL
+        h             <- rep(0, d)
+        h[-k]         <- apply(as.matrix(Zk[,-k]), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Zk[sample(1:nrow(Zk), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        vplusE        <- v + rexp(1) 
+        Xstar         <- ak(vplusE, alpha=alphak) + bk(vplusE, beta=betak)*Zkstar_kernel
+
+        return(Xstar)
+    })
+    Xstar <- do.call("rbind", Xstar)
+    
+    # check for the simulated data in the separators and include the termination
+    X23 <- apply(Xstar[,c(1:2)],1, function(x) {
+      if(sum(x > v) > 0) { 
+        alphak <- MA_IC[3,c(1:2)] #行
+        betak  <- MB_IC[3,c(1:2)] 
+        Z23 <- MZ456[[3]][,c(1:2)]
+        #h             <- NULL
+        #h             <- rep(0, 3)
+        h             <- apply(as.matrix(Z23), 2, function(x) density(x, kernel="gaussian")$bw)
+        Zkstar_edf    <- Z23[sample(1:nrow(Z23), 1, replace=TRUE), ]
+        Zkstar_kernel <- apply(cbind(Zkstar_edf, h), 1, function(x) rnorm(1, mean=x[1], sd=x[2]))
+        X23          <- ak(x[1], alpha=alphak) + bk(x[1], beta=betak)*Zkstar_kernel
+
+        return(X23)
+      }  else{
+          return(c(0,0))}
+      })    
+   X23<- split(X23, rep(1:nrow(X23), each = ncol(X23)))
+   X23 <- t(do.call("rbind", as.list(X23)))
+  
+   # check for the simulated data in the separators and include the termination  
+   X1 <- lapply(X23[,1], function(x) {
+     if(x > v) { 
+       Z21 <- MZ12[[2]][,1]
+       h <- density(Z21, kernel="gaussian")$bw
+       Zkstar_edf <- sample(Z21, 1, replace=TRUE)
+       Zkstar_kernel <- rnorm(1, mean=cbind(Zkstar_edf, h)[1], sd=cbind(Zkstar_edf, h)[2])
+       X1 <- MA_IC[2,1]*x + x^MB_IC[2,1]*Zkstar_kernel
+       return(X1)
+       }  else{
+         return(0)  
+         }
+     })  
+
+   X <- cbind(X1, X23, Xstar)
+
+   out <- list()
+   out$sim <- X
+   out$ex <- K
+   return(out)
+}
+
+SIM33 <- rQ3(8, v=v, A=MA_C, B=MB_C, Z=MZ456)
+SIM333<- as.data.frame(SIM33$sim)
+SIM33
+```
